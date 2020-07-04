@@ -1,0 +1,42 @@
+$black: #010000;
+$white: #ffffff;
+$lightGrey: #e6e6e6;
+$darkGrey: #333;
+$red: #ff1756;
+
+button {
+    padding: 5px 10px;
+    border: none;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    background-color: grey;
+    border-radius: 20px;
+    margin: 5px;
+}
+
+
+@mixin translateY($e) {
+    -webkit-transform: translateY($e);
+    -moz-transform: translateY($e);
+    transform: translateY($e);
+}
+
+@mixin transition($e) {
+    -webkit-transition: $e;
+    -moz-transition: $e;
+    transition: $e;
+}
+
+
+body {
+    font-family: 'Open Sans', sans-serif;
+    font-size: 18px;
+    font-weight: 300;
+    font-style: normal;
+
+    margin: 0;
+    padding: 0;
+    width: 100vw;
+    height: 100vh;
+}

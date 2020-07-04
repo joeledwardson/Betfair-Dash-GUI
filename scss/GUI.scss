@@ -1,0 +1,100 @@
+$card-count: 3;
+$left-width: 33vw;
+
+body, #react-entry-point, .content-container {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
+
+}
+
+#react-entry-point {
+    padding: 10px;
+}
+
+// grid containing element
+.content-container {
+
+    overflow: auto;
+    display: grid;
+    justify-content: stretch;
+
+    // stack items vertically
+    align-content: start;
+
+    grid-gap: 2vh 1vw;
+
+    grid-template-columns: 33vw auto;
+
+    grid-template-areas:
+        "g_header g_navigator"
+        "g_info g_ladder"
+        "g_chart g_ladder";
+
+    .header-container  {
+        grid-area: g_header;
+    }
+
+    .nav-container {
+        grid-area: g_navigator;
+        align-self: center;
+    }
+
+    .info-container {
+        grid-area: g_info;
+    }
+
+    // runner chart
+    .runner-chart-container {
+        grid-area: g_chart;
+    }
+
+    .card-container {
+        grid-area: g_ladder;
+        display: grid;
+        grid-template-columns: repeat($card-count, auto);
+        grid-template-rows: auto;
+    }
+
+
+}
+
+
+
+// race information styles
+// $connection-radius: 20px;
+// .info-container {
+//     display: grid;
+//     grid-template-columns: auto auto;
+//     justify-content: start;
+//     align-content: start;
+//     align-items: center;
+//     font-size: 15px;
+//     white-space: nowrap;
+//
+//     .info-title {
+//         text-align: right;
+//         padding-right: 1vw;
+//     }
+//
+//     .info-connected {
+//         height: $connection-radius;
+//         width: $connection-radius;
+//         border-radius: $connection-radius/2;
+//         border: 3px solid black;
+//         box-sizing: border-box;
+//         margin: 2px;
+//     }
+// }
+
+
+
+// navigation buttons styling
+.navs-container {
+    .slide-container {
+        input {
+            width: 100%;
+        }
+    }
+}

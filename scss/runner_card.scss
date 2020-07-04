@@ -1,0 +1,79 @@
+
+// element which holds runner information
+.runner-card {
+    background-color: rgba(255, 230, 230, 0.8);
+
+    position: relative;
+    display: grid;
+
+    grid-template-rows: auto auto;
+    grid-template-columns: auto auto;
+
+    justify-content: start;
+
+    grid-template-areas:
+        "r_header r_header"
+        "r_graph r_table";
+
+    // generic grid element within runner card
+    .runner-component {
+        align-self: center;
+        justify-self: center;
+
+        // title element
+        &.runner-title {
+            grid-area: r_header;
+
+            display: grid;
+
+            // make sure text is centered horizontally and vertically
+            justify-content: center;
+            align-items: center;
+
+
+            // set background for entire element
+            background: lightgreen;
+            width: 100%;
+        }
+
+        &.runner-price-chart {
+            grid-area: r_graph;
+            position: relative;
+        }
+
+        &.runner-table-container {
+            grid-area: r_table;
+            justify-self: stretch;
+            align-self: start;
+        }
+
+    }
+
+    // .tableFixHead {
+    //     overflow-y: auto;
+    //     height: 50vh;
+    // }
+    // thead {
+    //     padding-right: 20px; // for scrol bar
+    // }
+    // .tableFixHead thead th {
+    //     position: sticky;
+    //     top: 0;
+    //     padding: 3px;
+    //     white-space: nowrap;
+    // }
+    //
+    // /* Just common table stuff. Really. */
+    // table  {
+    //     border-collapse: collapse;
+    //     width: 100%;
+    // }
+    // th, td {
+    //     padding: 1px;
+    //     text-align: center;
+    // }
+    // th     {
+    //     background:#eee;
+    // }
+
+};
