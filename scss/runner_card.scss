@@ -1,3 +1,4 @@
+$cell-width: 70px;
 
 // element which holds runner information
 .runner-card {
@@ -25,15 +26,15 @@
             grid-area: r_header;
 
             display: grid;
+            justify-self: stretch;
 
             // make sure text is centered horizontally and vertically
-            justify-content: center;
-            align-items: center;
+            // justify-content: center;
+            // align-items: center;
 
 
             // set background for entire element
             background: lightgreen;
-            width: 100%;
         }
 
         &.runner-price-chart {
@@ -45,35 +46,21 @@
             grid-area: r_table;
             justify-self: stretch;
             align-self: start;
+
+            tbody {
+                td {
+                    min-width: $cell-width;
+                    width: $cell-width;
+                    max-width: $cell-width;
+                    font-size: 8px;
+                }
+                tr {
+                    height: 8px;
+                    padding: 0;
+                }
+            }
         }
 
     }
-
-    // .tableFixHead {
-    //     overflow-y: auto;
-    //     height: 50vh;
-    // }
-    // thead {
-    //     padding-right: 20px; // for scrol bar
-    // }
-    // .tableFixHead thead th {
-    //     position: sticky;
-    //     top: 0;
-    //     padding: 3px;
-    //     white-space: nowrap;
-    // }
-    //
-    // /* Just common table stuff. Really. */
-    // table  {
-    //     border-collapse: collapse;
-    //     width: 100%;
-    // }
-    // th, td {
-    //     padding: 1px;
-    //     text-align: center;
-    // }
-    // th     {
-    //     background:#eee;
-    // }
 
 };

@@ -1,14 +1,11 @@
-import plotly
-import plotly.graph_objs as go
 import dash_core_components as dcc
 import dash
-from dash.dependencies import Input, Output
 import dash_html_components as html
 import dash_table
 import plotly.express as px
 from plotly.graph_objs import Figure
 import pandas as pd
-import numpy as np
+from datetime import timedelta
 from myutils import generic, betting, timing, guiserver, importer, customlogging
 import itertools
 
@@ -20,34 +17,26 @@ mylogger = customlogging.create_dual_logger('gui', 'log/dashlog.log', file_reset
 
 class GUIInterface:
 
-    historical_list: List = None
-    active_record: MarketBook = None
-    active_index: int = 0
-    index_count: int = None
+    def __init__(self, record_list, n_cards: int):
 
-    timer: timing.TimeSimulator = None
-    running = False
-
-    runner_names: Dict[int, str] = None
-    ltps: pd.DataFrame = None
-
-    selected_ids: List = None
-
-    def initialise(self, record_list, n_cards):
         assert len(record_list)
         self.historical_list = record_list
         self.index_count = len(record_list)
         self.active_index = 0
-        self.active_record = record_list[self.active_index][0]
+        self.active_record: MarketBook = record_list[self.active_index][0]
 
         self.timer = timing.TimeSimulator()
         self.timer.reset_start(self.active_record.publish_time)
         self.running = False
 
         self.runner_names = betting.get_names(self.active_record.market_definition)
-        self.selected_ids = list(self.runner_names.keys())[:n_cards]
+        self.n_cards = n_cards
 
-        self.ltps = betting.get_ltps(record_list, self.runner_names)
+        self.ltps: pd.DataFrame = betting.get_ltps(record_list, self.runner_names)
+        self.chart_start_index = 0
+        self.chart_end_index = 0
+
+        self.slider_val = 0
 
     def update_current_record(self):
 
@@ -151,6 +140,21 @@ class InfoComponent(GuiComponent):
 
 
 class NavComponent(GuiComponent):
+    N_STEPS = 1000
+
+    def slider(self, html_id, start_str, end_str):
+        return dcc.Slider(
+            id=html_id,
+            min=0,
+            max=self.N_STEPS,
+            step=1,
+            value=0,
+            marks={
+                0: start_str,
+                self.N_STEPS: end_str
+            }
+        )
+
     def create(self, g: GUIInterface):
         return html.Div(className='nav-container', children=[
             html.Div(className="buttons-container", children=[
@@ -158,22 +162,64 @@ class NavComponent(GuiComponent):
                 html.Button('Pause', id='pause-button', n_clicks=0),
                 html.Span(id='running-indicator')
             ]),
-            dcc.Slider(
-                id='my-slider',
-                min=0,
-                max=1000,
-                step=1,
-                value=0,
-            ),
+            self.slider('my-slider', 'start', 'end'),
+            self.slider('my-recent-slider', '-30mins', 'end'),
             html.Div(id='slider-output-container'),
         ])
 
     def callbacks(self, g: GUIInterface, app: dash.Dash):
+
+        def get_changed_id():
+            # get ID of button which was last pressed
+            return [p['prop_id'] for p in dash.callback_context.triggered][0]
+
         @app.callback(
-            [dash.dependencies.Output('slider-output-container', 'children')],
-            [dash.dependencies.Input('my-slider', 'value')])
-        def update_output(value):
-            return [f'You have selected "{value}"']
+            dash.dependencies.Output('slider-output-container', 'children'),
+            [dash.dependencies.Input('my-slider', 'value'),
+             dash.dependencies.Input('my-recent-slider', 'value')])
+        def update_output(slider_val, recent_slider_val):
+
+            # get ID of button which was last pressed
+            changed_id = get_changed_id()
+
+            # get datetime start and end
+            t_start = g.historical_list[0][0].publish_time
+            t_end = g.historical_list[-1][0].publish_time
+
+            value = None
+
+            if 'recent' in changed_id:
+                value = recent_slider_val
+                mylogger.info(f'recent slider triggered: {value}')
+
+                # use 30 minutes from end for recent slider
+                t_start = t_end - timedelta(minutes=30)
+
+            elif 'slider' in changed_id:
+                value = slider_val
+                mylogger.info(f'full slider triggered: {value}')
+
+            else:
+                mylogger.info(f'slider id "{changed_id}" not recognised')
+                return ['']
+
+            # reset chart indexing values
+            g.chart_start_index = 0
+            g.chart_end_index = 0
+
+            # reset record indexing value
+            g.active_index = 0
+
+            # calculate current time based on percentage of steps taken
+            t_current = t_start + ((t_end - t_start) * (value / self.N_STEPS))
+
+            # get datetime string
+            t_str = t_current.isoformat(sep=' ', timespec='milliseconds')
+
+            # set simluation timer current datetime value
+            g.timer.reset_start(t_current)
+
+            return [f'You have selected {t_str}']
 
         @app.callback(dash.dependencies.Output('running-indicator', 'children'),
                       [dash.dependencies.Input('play-button', 'n_clicks'),
@@ -181,7 +227,7 @@ class NavComponent(GuiComponent):
         def play_button(a, b):
 
             # get ID of button which was last pressed
-            changed_id = [p['prop_id'] for p in dash.callback_context.triggered][0]
+            changed_id = get_changed_id()
 
             # initialise blank identifying element
             element = ''
@@ -207,7 +253,7 @@ class NavComponent(GuiComponent):
             else:
 
                 # id of button pressed not recognised
-                mylogger.warn(f'Button pressed not recognised: {changed_id}')
+                mylogger.warning(f'Button pressed not recognised: {changed_id}')
 
             return element
 
@@ -215,20 +261,47 @@ class NavComponent(GuiComponent):
 
 
 class ChartComponent(GuiComponent):
-    def __init__(self):
+    def __init__(self, chart_span_s):
         self.chart: Figure = None
+        self.span_s = chart_span_s
+
+    def get_fig(self, g: GUIInterface):
+        start = g.timer.current()
+        end = start + timedelta(seconds=self.span_s)
+
+        while g.chart_start_index + 1 < g.index_count and \
+                g.historical_list[g.chart_start_index + 1][0].publish_time < start:
+            g.chart_start_index += 1
+
+        while g.chart_end_index + 1 < g.index_count and \
+                g.historical_list[g.chart_end_index][0].publish_time < end:
+            g.chart_end_index += 1
+
+        df = g.ltps[g.chart_start_index: g.chart_end_index + 1]
+        self.fig = px.line(df, width=500, height=400)
+        self.fig.update_layout(margin=dict(l=0, r=0, t=0, b=0, pad=0),
+                               yaxis_type="log",
+                               xaxis=dict(range=[start, end]))
+        return self.fig
 
     def create(self, g: GUIInterface):
-        self.fig = px.line(g.ltps, width=500, height=400)
-        self.fig.update_layout(margin=dict(l=0, r=0, t=0, b=0, pad=0))
 
         return html.Div(className='runner-chart-container', children=[
             dcc.Graph(
                 id='runner-graph',
-                figure=self.fig,
+                figure=self.get_fig(g),
                 config=dict(displayModeBar=False, staticPlot=True)
             )
         ])
+
+    def callbacks(self, g: GUIInterface, app: dash.Dash) -> List[Dict]:
+        def update():
+            return self.get_fig(g)
+
+        return [{
+            'output': dash.dependencies.Output('runner-graph', 'figure'),
+            'function': update
+        }]
 
 
 class RunnerCard(GuiComponent):
@@ -238,7 +311,6 @@ class RunnerCard(GuiComponent):
         'available_to_lay': 'atl',
         'traded_volume': 'tv'
     }
-    CELL_WIDTH = '70px'
 
     def __init__(self, runner_id, index, name):
         self.runner_id = runner_id
@@ -250,12 +322,31 @@ class RunnerCard(GuiComponent):
         tbl_data = self.empty_table(self.index)
 
         return html.Div(className='runner-card', children=[
-            self.title(self.name, self.runner_id),
+            self.title(self.index, self.name, self.runner_id, g),
             self.price_chart(),
             self.table(tbl_data)
         ])
 
     def callbacks(self, g: GUIInterface, app: dash.Dash):
+
+        @app.callback(dash.dependencies.Output(self.t('selected-indicator', self.index), 'children'),
+                      [dash.dependencies.Input(self.t('dropdown', self.index), 'value')])
+        def update_selected(new_runner_id):
+
+            mylogger.info(f'Index {self.index} ladder just selected id {new_runner_id}')
+            selected = self.runner_id
+
+            if new_runner_id not in g.runner_names.keys():
+                mylogger.warn(f'Value selected by index {self.index} is not found in runner indexes')
+                return selected
+
+            self.runner_id = new_runner_id
+            self.name = g.runner_names[new_runner_id]
+            return [
+                html.Div(self.name),
+                html.Div(self.runner_id)
+            ]
+
 
         def update():
 
@@ -317,13 +408,28 @@ class RunnerCard(GuiComponent):
                 i = betting.LTICKS.index(t)
 
                 # update value in table
-                tbl[i][key] = p.size
+                tbl[i][key] = f'{p.size:.2f}'
 
-    @staticmethod
-    def title(runner_name, runner_id):
+    @classmethod
+    def dropdown(cls, index, runner_id, g: GUIInterface):
+
+        return dcc.Dropdown(
+            id=cls.t('dropdown', index),
+            options=[
+                {'label': name, 'value': _id}
+                for _id, name in g.runner_names.items()
+            ],
+            value = runner_id
+        )
+
+    @classmethod
+    def title(cls, index, runner_name, runner_id, g: GUIInterface):
         return html.Div(className="runner-component runner-title", children=[
-            html.Div(runner_name, className='title-container'),
-            html.Div(runner_id)
+            cls.dropdown(index, runner_id, g),
+            html.Div(id=cls.t('selected-indicator', index), children=[
+                html.Div(runner_name),
+                html.Div(runner_id)
+            ])
         ])
 
     @staticmethod
@@ -347,10 +453,6 @@ class RunnerCard(GuiComponent):
                     'headers': True
                 },
                 style_cell={
-                    # all three widths are needed
-                    'minWidth': self.CELL_WIDTH,
-                    'width': self.CELL_WIDTH,
-                    'maxWidth': self.CELL_WIDTH,
                     'textAlign': 'center'
                 }
             )
@@ -360,14 +462,34 @@ class RunnerCard(GuiComponent):
 class CardComponents(GuiComponent):
 
     def __init__(self):
-        self.runner_cards = List[RunnerCard]
+        self.runner_cards: List[RunnerCard] = None
 
     def create(self, g: GUIInterface):
-        self.runner_cards = [RunnerCard(runner_id, index, g.runner_names[runner_id])
-                             for index, runner_id in enumerate(g.selected_ids)]
 
+        # sorting function - based on last traded price (if exists)
+        def sorter(runner):
+            return runner.last_price_traded or float('inf')
+
+        # get pre race records
+        pre_race = [h for h in g.historical_list if not h[0].inplay]
+
+        # get last record before race starts
+        last_record = pre_race[-1][0]
+
+        # get sorted list of runners based on ltp
+        sorted_runners = sorted(last_record.runners, key=sorter)[:g.n_cards]
+
+        # get sorted list of runner ids
+        selected_ids = [r.selection_id for r in sorted_runners]
+
+        # create runner card instances
+        self.runner_cards = [RunnerCard(runner_id, index, g.runner_names[runner_id])
+                             for index, runner_id in enumerate(selected_ids)]
+
+        # create html elements with runner card instances
         card_elements = [r.create(g) for r in self.runner_cards]
 
+        # return card instances in the container
         return html.Div(
             className='card-container',
             children=card_elements)
@@ -387,14 +509,16 @@ class TitleComponent(GuiComponent):
 class DashGUI(generic.StaticClass):
 
     N_CARDS = 3
+    CHART_SPAN_S = 60
 
     app = None
-    g: GUIInterface = GUIInterface()
+    g: GUIInterface = None
 
+    # nav component must come before chart so chart positions are updated first on slider move
     componentList: List[GuiComponent] = [TitleComponent(),
                                          InfoComponent(),
                                          NavComponent(),
-                                         ChartComponent(),
+                                         ChartComponent(CHART_SPAN_S),
                                          CardComponents()]
 
     @classmethod
@@ -416,12 +540,12 @@ class DashGUI(generic.StaticClass):
     def create(cls, name, record_list):
 
         cls.app = dash.Dash(name)
-        cls.g.initialise(record_list, cls.N_CARDS)
+        cls.g = GUIInterface(record_list, cls.N_CARDS)
 
         children = [
             dcc.Interval(
                 id='interval-component',
-                interval=1 * 3000,  # in milliseconds
+                interval=1 * 1000,  # in milliseconds
                 n_intervals=0
             )
         ]
@@ -433,12 +557,14 @@ class DashGUI(generic.StaticClass):
         cls.set_callbacks()
 
 
+def run(name, record_list, debug):
+    DashGUI.create(name, record_list)
+    DashGUI.app.run_server(debug=debug)
+
+
 if __name__ == '__main__':
     trading = betting.get_api_client()
     trading.login()
     historical_queue = betting.get_historical(trading, r'data/bfsample10')
     historical_list = list(historical_queue.queue)
-
-    DashGUI.create(__name__, historical_list)
-
-    DashGUI.app.run_server(debug=False)
+    run(__name__, historical_list, False)
