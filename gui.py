@@ -12,7 +12,7 @@ import itertools
 from betfairlightweight.resources.bettingresources import RunnerBook, PriceSize, MarketBook
 from typing import List, Dict
 
-mylogger = customlogging.create_dual_logger('gui', 'log/dashlog.log', file_reset=True)
+myLogger = customlogging.create_dual_logger('gui', 'log/dashlog.log', file_reset=True)
 
 
 class GUIInterface:
@@ -59,7 +59,7 @@ class GUIInterface:
         if self.active_index < 0 or self.active_index >= self.index_count:
 
             # sanity check index for out of bounds
-            mylogger.error(f'index "{self.active_index}" is out of bounds, len is "{self.index_count}"')
+            myLogger.error(f'index "{self.active_index}" is out of bounds, len is "{self.index_count}"')
 
         else:
 
@@ -190,17 +190,17 @@ class NavComponent(GuiComponent):
 
             if 'recent' in changed_id:
                 value = recent_slider_val
-                mylogger.info(f'recent slider triggered: {value}')
+                myLogger.info(f'recent slider triggered: {value}')
 
                 # use 30 minutes from end for recent slider
                 t_start = t_end - timedelta(minutes=30)
 
             elif 'slider' in changed_id:
                 value = slider_val
-                mylogger.info(f'full slider triggered: {value}')
+                myLogger.info(f'full slider triggered: {value}')
 
             else:
-                mylogger.info(f'slider id "{changed_id}" not recognised')
+                myLogger.info(f'slider id "{changed_id}" not recognised')
                 return ['']
 
             # reset chart indexing values
@@ -236,7 +236,7 @@ class NavComponent(GuiComponent):
 
                 # play button pressed - start running
                 g.start_running()
-                mylogger.info('Start button pressed')
+                myLogger.info('Start button pressed')
 
                 # set html element to indicate race is now running
                 element = 'RUNNING'
@@ -245,7 +245,7 @@ class NavComponent(GuiComponent):
 
                 # pause button pressed
                 g.stop_running()
-                mylogger.info('Stop button paused')
+                myLogger.info('Stop button paused')
 
                 # set html element to indicate race has stopped running
                 element  = 'STOPPED'
@@ -253,7 +253,7 @@ class NavComponent(GuiComponent):
             else:
 
                 # id of button pressed not recognised
-                mylogger.warning(f'Button pressed not recognised: {changed_id}')
+                myLogger.warning(f'Button pressed not recognised: {changed_id}')
 
             return element
 
@@ -333,11 +333,11 @@ class RunnerCard(GuiComponent):
                       [dash.dependencies.Input(self.t('dropdown', self.index), 'value')])
         def update_selected(new_runner_id):
 
-            mylogger.info(f'Index {self.index} ladder just selected id {new_runner_id}')
+            myLogger.info(f'Index {self.index} ladder just selected id {new_runner_id}')
             selected = self.runner_id
 
             if new_runner_id not in g.runner_names.keys():
-                mylogger.warn(f'Value selected by index {self.index} is not found in runner indexes')
+                myLogger.warn(f'Value selected by index {self.index} is not found in runner indexes')
                 return selected
 
             self.runner_id = new_runner_id

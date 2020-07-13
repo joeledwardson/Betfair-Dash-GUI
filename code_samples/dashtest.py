@@ -2,7 +2,6 @@ import plotly
 import plotly.graph_objs as go
 import dash_core_components as dcc
 import dash
-from dash.dependencies import Input, Output
 import dash_html_components as html
 import dash_table
 import plotly.express as px
@@ -17,7 +16,7 @@ from typing import List
 
 
 importlib.reload(customlogging)
-mylogger = customlogging.create_dual_logger(__name__, 'log/dashlog.log', file_reset=True)
+mylogger = customlogging.create_dual_logger(__name__, '../log/dashlog.log', file_reset=True)
 importer.reload_utils()
 
 trading = betting.get_api_client()
