@@ -54,13 +54,19 @@ class GUIInterface:
         # number of runner cards to display in GUI
         self.n_cards = n_cards
 
-        # get data frame of last traded pirces
+        # get data frame of last traded prices
         self.ltps: pd.DataFrame = betting.get_ltps(record_list, self.runner_names)
+
+        # index of record at the start of the last traded prices graph
         self.chart_start_index = 0
+        # index of record at the end of the last traded prices graph
         self.chart_end_index = 0
 
+        # slider relative position
         self.slider_val = 0
 
+    # update self.active_index and self.active_record based on which record in list has a timestamp closest to (but not
+    # more than) current simulation time
     def update_current_record(self):
 
         while 1:
@@ -89,30 +95,47 @@ class GUIInterface:
             # update current record
             self.active_record = self.historical_list[self.active_index][0]
 
+    # check if active index is last in list
     def at_end(self):
         return not (self.active_index < self.index_count)
 
+    # start race running GUI simulation
     def start_running(self):
         if not self.at_end() and not self.running:
             self.timer.start()
             self.running = True
 
+    # stop race running simulation
     def stop_running(self):
         if self.running:
             self.timer.stop()
         self.running = False
 
 
+# abstract class for GUI components
 class GuiComponent:
-    def create(self, g: GUIInterface):
+
+    # create() method must be derived
+    # takes a GUIInterface instance to interact with GUI properties and returns a html dash Component
+    def create(self, g: GUIInterface) -> dash.development.base_component.Component:
         raise Exception(f'Cannot use base "{self.__class__}" class')
 
+    # callbacks() is optional to derive
+    # takes a GUIInterface instance to interact with GUI properties and returns a html dash Component
+    # takes a Dash instance which can be used to declare callbacks with syntax @app.callback(...)[...]
+    # must return a list of dicts, where each dict will be added to callbacks triggered on periodic updating, dict
+    # values are:
+    # - 'output': dash.dependencies.Output() instance
+    # - 'function': callback function with 0 arguments
     def callbacks(self, g: GUIInterface, app: dash.Dash) -> List[Dict]:
         return []
 
 
+# GUI Component - Race information table
 class InfoComponent(GuiComponent):
 
+    # dict of MarketBook properties, whereby key is property display name and value is function to get value from
+    # MarketBook
     RECORD_INFO = {
         'Record Time': lambda r: r.publish_time.isoformat(sep=' ', timespec='milliseconds'),
         'Market Time': lambda r: r.market_definition.market_time.isoformat(sep=' ', timespec='milliseconds'),
@@ -122,15 +145,23 @@ class InfoComponent(GuiComponent):
     }
 
     def create(self, g: GUIInterface):
+
+        # encapsulate table in div with class for css styling
         return html.Div(className="info-container", children=[
+
+            # create datatable 'Info' and 'Value' columns for property display names and values respectively
             dash_table.DataTable(
                 id='info-table',
                 columns=[{"name": i, "id": i} for i in ['Info', 'Value']],
                 data=self.info_columns(g),
             ),
+
         ])
 
+    # get list of dict items with 'Info' attribute as property display name and 'Value' as property value
     def info_columns(self, g: GUIInterface):
+
+        # get simulated time and active record index
         data = [
             {
                 'Info': 'Simulated Time',
@@ -141,6 +172,8 @@ class InfoComponent(GuiComponent):
                 'Value': g.active_index
             }
         ]
+
+        # add active record properties to property list
         data += [
             {
                 'Info': k,
@@ -148,24 +181,37 @@ class InfoComponent(GuiComponent):
             }
             for k, f in self.RECORD_INFO.items()
         ]
+
         return data
 
     def callbacks(self, g: GUIInterface, app: dash.Dash):
 
+        # period callback function
         def update():
+
+            # update active index and record here
             g.update_current_record()
+
+            # generate datatable data list and return
             return self.info_columns(g)
 
+        # period update has output of 'data' attribute of datatable
+        # function updates current record and returns updated info
         return [{
             'output': dash.dependencies.Output('info-table', 'data'),
             'function': update
         }]
 
 
+# GUI Component - race navigation
 class NavComponent(GuiComponent):
+
+    # number of steps in sliders
     N_STEPS = 1000
 
-    def slider(self, html_id, start_str, end_str):
+    # create html slider - requires unique {html_id}, and strings to display at start {start_str} and end {end_str}
+    # of slider
+    def slider(self, html_id, start_str, end_str) -> dcc.Slider:
         return dcc.Slider(
             id=html_id,
             min=0,
@@ -180,20 +226,28 @@ class NavComponent(GuiComponent):
 
     def create(self, g: GUIInterface):
         return html.Div(className='nav-container', children=[
+
+            # create play and pause buttons, and 'running-indicator' which tells if simulator is running or not
             html.Div(className="buttons-container", children=[
                 html.Button('Play', id='play-button', n_clicks=0),
                 html.Button('Pause', id='pause-button', n_clicks=0),
                 html.Span(id='running-indicator')
             ]),
+
+            # slider for start to end of all historical records
             self.slider('my-slider', 'start', 'end'),
+
+            # slider for 30 minutes before to last historical record
             self.slider('my-recent-slider', '-30mins', 'end'),
+
+            # div which displays last timestamp selected by either of the sliders
             html.Div(id='slider-output-container'),
         ])
 
     def callbacks(self, g: GUIInterface, app: dash.Dash):
 
+        # get ID of button which was last pressed
         def get_changed_id():
-            # get ID of button which was last pressed
             return [p['prop_id'] for p in dash.callback_context.triggered][0]
 
         @app.callback(
@@ -271,7 +325,7 @@ class NavComponent(GuiComponent):
                 myLogger.info('Stop button paused')
 
                 # set html element to indicate race has stopped running
-                element  = 'STOPPED'
+                element = 'STOPPED'
 
             else:
 
@@ -280,90 +334,120 @@ class NavComponent(GuiComponent):
 
             return element
 
+        # no periodic callback updating required
         return []
 
 
+# GUI Component - runner chart
 class ChartComponent(GuiComponent):
+
+    # pass chart span (seconds) to constructor
     def __init__(self, chart_span_s):
         self.chart: Figure = None
         self.span_s = chart_span_s
 
-    def get_fig(self, g: GUIInterface):
-        start = g.timer.current()
-        end = start + timedelta(seconds=self.span_s)
+    # generate figure of last traded prices of runners from current simulation time
+    def get_fig(self, g: GUIInterface) -> Figure:
 
+        # use current simulation time as end of chart
+        end = g.timer.current()
+
+        # subtract chart span (seconds) from end to get start time of chart
+        start = end - timedelta(seconds=self.span_s)
+
+        # increment chart start index while (next record is not last record) and (next record time is less than start
+        # time). Once next record is beyond start time, loop will exit, and index will be the last one before
+        # exceeding the start time
         while g.chart_start_index + 1 < g.index_count and \
                 g.historical_list[g.chart_start_index + 1][0].publish_time < start:
             g.chart_start_index += 1
 
+        # increment chart end index while (next record is not last record) and (next record time is less than end time)
+        # Once next record beyond end time, loop will exit, index will be last once before exceeding end time
         while g.chart_end_index + 1 < g.index_count and \
                 g.historical_list[g.chart_end_index][0].publish_time < end:
             g.chart_end_index += 1
 
-        df = g.ltps[g.chart_start_index: g.chart_end_index + 1]
+        # end index is last record before exceeding end time. However, need record beyond end time so that entries fill
+        # up to the end of the chart. Thus need chart_end_index + 1, but need to add another 1 because slicing does not
+        # include the upper value (i.e. slice(0, 3) is from 0 to 2 not 0 to 3)
+        df = g.ltps[g.chart_start_index: g.chart_end_index + 2]
+
+        # create figure based off dataframe
         self.fig = px.line(df, width=500, height=400)
+
+        # set to 0 margins, logarithmic type, and xaxis timestamp start and end
         self.fig.update_layout(margin=dict(l=0, r=0, t=0, b=0, pad=0),
                                yaxis_type="log",
                                xaxis=dict(range=[start, end]))
         return self.fig
 
     def create(self, g: GUIInterface):
-
         return html.Div(className='runner-chart-container', children=[
             dcc.Graph(
                 id='runner-graph',
                 figure=self.get_fig(g),
+                # don't show mode bar (as too quick to interact), and set to static to speed up rendering
                 config=dict(displayModeBar=False, staticPlot=True)
             )
         ])
 
     def callbacks(self, g: GUIInterface, app: dash.Dash) -> List[Dict]:
+
+        # periodic update function to return updated figure object
         def update():
             return self.get_fig(g)
 
+        # period update is 'figure; attribute of chart object
         return [{
             'output': dash.dependencies.Output('runner-graph', 'figure'),
             'function': update
         }]
 
 
+# GUI Component (not to be used directly) - single runner card
 class RunnerCard(GuiComponent):
 
+    # dict mapping of book attribute names within runner book to display names in runner card
     BOOK_ABRVS = {
         'available_to_back': 'atb',
         'available_to_lay': 'atl',
         'traded_volume': 'tv'
     }
 
+    """
+    runner_id is the ID of the runner selected for the card.
+    index is the index of the card displayed on the GUI - this is used for creation of unique keys in html elements
+    name of the name of the runner
+    """
     def __init__(self, runner_id, index, name):
         self.runner_id = runner_id
         self.index = index
         self.table_id = f'runner-table-{index}'
         self.name = name
 
-    def create(self, g: GUIInterface):
-        tbl_data = self.empty_table(self.index)
-
-        return html.Div(className='runner-card', children=[
-            self.title(self.index, self.name, self.runner_id, g),
-            self.price_chart(),
-            self.table(tbl_data)
-        ])
-
     def callbacks(self, g: GUIInterface, app: dash.Dash):
 
+        # callback triggered on runner dropdown selection change
         @app.callback(dash.dependencies.Output(self.t('selected-indicator', self.index), 'children'),
                       [dash.dependencies.Input(self.t('dropdown', self.index), 'value')])
         def update_selected(new_runner_id):
 
+            # log runner change
             myLogger.info(f'Index {self.index} ladder just selected id {new_runner_id}')
+
+            # get existing selected ID
             selected = self.runner_id
 
+            # check ID exists and quit if not with existing ID
             if new_runner_id not in g.runner_names.keys():
                 myLogger.warn(f'Value selected by index {self.index} is not found in runner indexes')
                 return selected
 
+            # assign new ID
             self.runner_id = new_runner_id
+
+            # assign new name
             self.name = g.runner_names[new_runner_id]
             return [
                 html.Div(self.name),
@@ -374,25 +458,26 @@ class RunnerCard(GuiComponent):
         def update():
 
             # get empty ladder table
-            tbl_data = self.empty_table(self.index)
+            tbl_data = self.table_data(self.index)
 
             # get index of runner's id in record's runner list
             list_index = generic.get_index(g.active_record.runners, lambda r: r.selection_id == self.runner_id)
 
-            # check runner found
-            if list_index:
+            # if runner not found, return empty table
+            if not list_index:
+                return tbl_data
 
-                # get runner book object
-                runner_book = g.active_record.runners[list_index]
+            # get runner book object
+            runner_book = g.active_record.runners[list_index]
 
-                # loop market book attribute names
-                for bk_name, bk_abrv in self.BOOK_ABRVS.items():
+            # loop market book attribute names
+            for bk_name, bk_abrv in self.BOOK_ABRVS.items():
 
-                    # get market book data and assign to ladder
-                    self.update_data(
-                        tbl=tbl_data,
-                        price_list=getattr(runner_book.ex, bk_name),
-                        key=self.t(bk_abrv, self.index))
+                # get market book data and assign to ladder
+                self.update_data(
+                    tbl=tbl_data,
+                    price_list=getattr(runner_book.ex, bk_name),
+                    key=self.t(bk_abrv, self.index))
 
             return tbl_data
 
@@ -405,8 +490,52 @@ class RunnerCard(GuiComponent):
     def t(name, index):
         return f'{name}-{index}'
 
+    # create unique id based on element name and card index
+    def create(self, g: GUIInterface):
+
+        # create dataset for empty table
+        tbl_data = self.table_data(self.index)
+
+        return html.Div(className='runner-card', children=[
+
+            # title element displays runner name and ID
+            self.create_title(self.index, self.name, self.runner_id, g),
+
+            # price chart shows short term last traded price info for runner
+            self.create_price_chart(),
+
+            # ladder
+            self.create_table(tbl_data, self.table_id, self.index)
+        ])
+
+    # create html Div containing ladder table to hold ladder data
     @classmethod
-    def empty_table(cls, index):
+    def create_table(cls, table_data, table_id, index):
+        return html.Div(className="runner-component runner-table-container", children=[
+            dash_table.DataTable(
+                id=table_id,
+
+                # as specified in the empty_table() cols are abbreviations of 'available to back',
+                # 'available to lay', 'traded volume' with odds in the centre
+                columns=[
+                    {
+                        'name': col,
+                        'id': cls.t(col, index)
+                    } for col in ['atb', 'odds', 'atl', 'tv']
+                ],
+                data=table_data,
+                fixed_rows={
+                    'headers': True
+                },
+                style_cell={
+                    'textAlign': 'center'
+                }
+            )
+        ])
+
+    # create table with odds ticks filled, but empty for everything else
+    @classmethod
+    def table_data(cls, index):
         return [
             {
                 cls.t('atb', index): None,
@@ -416,6 +545,7 @@ class RunnerCard(GuiComponent):
             } for tick in betting.TICKS_DECODED
         ]
 
+    # update table data for a given market book (list of price sizes) and its abbreviation within dict (key)
     @staticmethod
     def update_data(tbl, price_list: List[PriceSize], key):
 
@@ -433,8 +563,9 @@ class RunnerCard(GuiComponent):
                 # update value in table
                 tbl[i][key] = f'{p.size:.2f}'
 
+    # create dropdown element for selecting a runner
     @classmethod
-    def dropdown(cls, index, runner_id, g: GUIInterface):
+    def create_dropdown(cls, index, runner_id, g: GUIInterface):
 
         return dcc.Dropdown(
             id=cls.t('dropdown', index),
@@ -445,43 +576,26 @@ class RunnerCard(GuiComponent):
             value = runner_id
         )
 
+    # create title element which holds dropdown for runner select, selected runner indicators
     @classmethod
-    def title(cls, index, runner_name, runner_id, g: GUIInterface):
+    def create_title(cls, index, runner_name, runner_id, g: GUIInterface):
         return html.Div(className="runner-component runner-title", children=[
-            cls.dropdown(index, runner_id, g),
+            cls.create_dropdown(index, runner_id, g),
             html.Div(id=cls.t('selected-indicator', index), children=[
                 html.Div(runner_name),
                 html.Div(runner_id)
             ])
         ])
 
+    # TODO create price chart of short time price movements for runner
     @staticmethod
-    def price_chart():
+    def create_price_chart():
         return html.Div(className="runner-component runner-price-chart", children=[
 
         ])
 
-    def table(self, table_data):
-        return html.Div(className="runner-component runner-table-container", children=[
-            dash_table.DataTable(
-                id=self.table_id,
-                columns=[
-                    {
-                        'name': col,
-                        'id': self.t(col, self.index)
-                    } for col in ['atb', 'odds', 'atl', 'tv']
-                ],
-                data=table_data,
-                fixed_rows={
-                    'headers': True
-                },
-                style_cell={
-                    'textAlign': 'center'
-                }
-            )
-        ])
 
-
+# GUI Component - runner cards group
 class CardComponents(GuiComponent):
 
     def __init__(self):
@@ -518,9 +632,15 @@ class CardComponents(GuiComponent):
             children=card_elements)
 
     def callbacks(self, g: GUIInterface, app: dash.Dash):
-        return list(itertools.chain(*[r.callbacks(g, app) for r in self.runner_cards]))
+        return list(itertools.chain(
+            # run callbacks() for each runner card returning a list [{'output': ..., 'function': ...}]
+            # itertools.chain takes multiple args so must unpack (*) resulting list
+            # result is lists of {'output': ..., 'function'...} dicts are combined into a single list
+            *[r.callbacks(g, app) for r in self.runner_cards]
+        ))
 
 
+# GUI Component - GUI title
 class TitleComponent(GuiComponent):
     def create(self, g: GUIInterface):
         return html.H1(
@@ -529,12 +649,20 @@ class TitleComponent(GuiComponent):
         )
 
 
+# GUI class - must use class definition and not create instances, given there (should?) be only one GUI instance
+# running at a time
 class DashGUI(generic.StaticClass):
 
+    # number of runner cards to display
     N_CARDS = 3
+
+    # time-span of runner chart (seconds)
     CHART_SPAN_S = 60
 
-    app = None
+    # Dash app instance
+    app: dash.Dash = None
+
+    # GUI interface instance
     g: GUIInterface = None
 
     # nav component must come before chart so chart positions are updated first on slider move
@@ -545,26 +673,42 @@ class DashGUI(generic.StaticClass):
                                          CardComponents()]
 
     @classmethod
-    def set_callbacks(cls):
+    def _set_callbacks(cls):
 
-        interval_callbacks = list(itertools.chain(*[
-            c.callbacks(cls.g, cls.app) for c in cls.componentList
-        ]))
+        # get list of interval dicts for each component
+        interval_callbacks = list(itertools.chain(
 
+            # each callbacks() returns a list, but must unpack comprehension list to pass to chain()
+            *[c.callbacks(cls.g, cls.app) for c in cls.componentList]
+
+        ))
+
+        # create interval callback
+        # dash outputs are created from 'output' attributes in each callback dict returned from component
         @cls.app.callback([c['output'] for c in interval_callbacks],
                           [dash.dependencies.Input('interval-component', 'n_intervals')])
         def interval_update(n_intervals):
+
+            # list to store outputs to return from callback
             output_list = []
+
             for c in interval_callbacks:
+                # 'function' attribute is the callback function to run - take its output and add to output list
                 output_list.append(c['function']())
+
             return output_list
 
+    # entry point - create and return dash app, having created components and callbacks
     @classmethod
-    def create(cls, name, record_list):
+    def create_app(cls, name, record_list) -> dash.Dash:
 
+        # create app instance
         cls.app = dash.Dash(name)
+
+        # create 'GUIInterface' instance
         cls.g = GUIInterface(record_list, cls.N_CARDS)
 
+        # create list of children with first instance as interval callback to trigger periodic updating
         children = [
             dcc.Interval(
                 id='interval-component',
@@ -572,25 +716,31 @@ class DashGUI(generic.StaticClass):
                 n_intervals=0
             )
         ]
+        # create components from component list and to children
         children += [
             c.create(cls.g) for c in cls.componentList
         ]
 
+        # add children to app layout
         cls.app.layout = html.Div(className='content-container', children=children)
-        cls.set_callbacks()
+
+        # set callbacks for components
+        cls._set_callbacks()
+
+        return cls.app
 
 
+# create and run dash app - 'name' specifies app name, 'record_list' is historical record list and 'debug' set to True
+# or False passed directly to app.run_server()
 def run(name, record_list, debug):
-    DashGUI.create(name, record_list)
-    DashGUI.app.run_server(debug=debug)
+    app = DashGUI.create_app(name, record_list)
+    app.run_server(debug=debug)
 
 
+# if module run and not imported then run app using sample data
 if __name__ == '__main__':
     trading = betting.get_api_client()
     trading.login()
     historical_queue = betting.get_historical(trading, r'data/bfsample10')
     historical_list = list(historical_queue.queue)
     run(__name__, historical_list, False)
-
-
-# THIS IS A GIT TEST COMMENT
