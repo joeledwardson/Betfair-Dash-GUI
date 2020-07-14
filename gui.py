@@ -6,32 +6,55 @@ import plotly.express as px
 from plotly.graph_objs import Figure
 import pandas as pd
 from datetime import timedelta
-from myutils import generic, betting, timing, guiserver, importer, customlogging
+from myutils import generic, betting, timing, customlogging
 import itertools
-
-from betfairlightweight.resources.bettingresources import RunnerBook, PriceSize, MarketBook
+from betfairlightweight.resources.bettingresources import PriceSize, MarketBook
 from typing import List, Dict
 
+# custom logging instance which prints to console and logs debug to file
 myLogger = customlogging.create_dual_logger('gui', 'log/dashlog.log', file_reset=True)
 
 
+# GUI interface class holds data which is shared between different GUI Components
+# - for example, simulated race time needs to be accessible to the chart component, not just the information table
+# - which displays the simulated time
 class GUIInterface:
 
+    # record_list should be list of [MarketBook], (that is, each element is a list with 1 element of type MarketBook)
+    # - record_list is based off api_client.streaming.create_historical_stream() where api_client is a
+    # - betfairlightweight.APIClient instance
+    # n_cards is number of runner cards to display in GUI
     def __init__(self, record_list, n_cards: int):
 
+        # check the record list is not empty
         assert len(record_list)
+
+        # assign historical list to local copy
         self.historical_list = record_list
+        # quickly accessible number of records, shorthand of len(self.historical_list)
         self.index_count = len(record_list)
+
+        # index, within record list of current (active) record
         self.active_index = 0
+        # active record, shorthand of self.historical_list[self.active_index][0]
+        # should be updated every time self.active_index is updated
         self.active_record: MarketBook = record_list[self.active_index][0]
 
+        # timing simulator instance
         self.timer = timing.TimeSimulator()
+        # set simulator start time to timestamp from active (first) record
         self.timer.reset_start(self.active_record.publish_time)
+
+        # race simulator is running indicator
         self.running = False
 
+        # get runner IDs to names dict
         self.runner_names = betting.get_names(self.active_record.market_definition)
+
+        # number of runner cards to display in GUI
         self.n_cards = n_cards
 
+        # get data frame of last traded pirces
         self.ltps: pd.DataFrame = betting.get_ltps(record_list, self.runner_names)
         self.chart_start_index = 0
         self.chart_end_index = 0
@@ -568,3 +591,6 @@ if __name__ == '__main__':
     historical_queue = betting.get_historical(trading, r'data/bfsample10')
     historical_list = list(historical_queue.queue)
     run(__name__, historical_list, False)
+
+
+# THIS IS A GIT TEST COMMENT
