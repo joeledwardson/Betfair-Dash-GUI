@@ -707,8 +707,14 @@ class DashGUI(generic.StaticClass):
     @classmethod
     def create_app(cls, name, record_list) -> dash.Dash:
 
+        # get absolute path of assets folder
+        path = os.path.abspath(__file__)
+        dir_path = os.path.dirname(path)
+        assets_path = os.path.join(dir_path, 'assets')
+
         # create app instance
-        cls.app = dash.Dash(name)
+        # specify absolute folder of assets incase called from a different dir
+        cls.app = dash.Dash(name, assets_folder=assets_path)
 
         # create 'GUIInterface' instance
         cls.g = GUIInterface(record_list, cls.N_CARDS)
@@ -744,6 +750,9 @@ def run(name, record_list, debug):
 
 # if module run and not imported then run app using sample data
 if __name__ == '__main__':
+
+
+
     trading = betting.get_api_client()
     trading.login()
     historical_queue = betting.get_historical(trading, r'data/bfsample10')
