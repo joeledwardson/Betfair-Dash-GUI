@@ -10,6 +10,11 @@ from myutils import generic, betting, timing, customlogging
 import itertools
 from betfairlightweight.resources.bettingresources import PriceSize, MarketBook
 from typing import List, Dict
+import os
+
+# create log folder if doesnt exist
+if not os.path.isdir('log'):
+    os.mkdir('log')
 
 # custom logging instance which prints to console and logs debug to file
 myLogger = customlogging.create_dual_logger('gui', 'log/dashlog.log', file_reset=True)
