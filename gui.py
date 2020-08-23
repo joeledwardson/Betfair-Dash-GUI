@@ -146,7 +146,9 @@ class InfoComponent(GuiComponent):
         'Market Time': lambda r: r.market_definition.market_time.isoformat(sep=' ', timespec='milliseconds'),
         'Event Name': lambda r: r.market_definition.event_name,
         'Name': lambda r: r.market_definition.name,
-        'Betting Type': lambda r: r.market_definition.betting_type
+        'Betting Type': lambda r: r.market_definition.betting_type,
+        'Total Matched': lambda r: '£{:,.0f}'.format(sum(runner.total_matched or 0 for runner in r.runners)),
+        'In Play': lambda r: r.market_definition.in_play
     }
 
     def create(self, g: GUIInterface):
@@ -454,11 +456,11 @@ class RunnerCard(GuiComponent):
 
             # assign new name
             self.name = g.runner_names[new_runner_id]
+
             return [
                 html.Div(self.name),
-                html.Div(self.runner_id)
+                html.Div(self.runner_id),
             ]
-
 
         def update():
 
@@ -755,6 +757,6 @@ if __name__ == '__main__':
 
     trading = betting.get_api_client()
     trading.login()
-    historical_queue = betting.get_historical(trading, r'data/bfsample10')
+    historical_queue = betting.get_historical(trading, r'D:\Betfair_data\horse_racing\2020\May\20\29810124 SE Solvalla\29810124 17_27 7 ODDS WIN')
     historical_list = list(historical_queue.queue)
     run(__name__, historical_list, False)
