@@ -11,6 +11,8 @@ import itertools
 from betfairlightweight.resources.bettingresources import PriceSize, MarketBook
 from typing import List, Dict
 import os
+import argparse
+
 
 # create log folder if doesnt exist
 if not os.path.isdir('log'):
@@ -753,10 +755,21 @@ def run(name, record_list, debug):
 # if module run and not imported then run app using sample data
 if __name__ == '__main__':
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument('race_file',
+                        type=str,
+                        help='historical horse racing file to run with GUI')
 
+    args = parser.parse_args()
+    file_name = args.race_file
 
+    myLogger.info('Logging into betfair API...')
     trading = betting.get_api_client()
     trading.login()
-    historical_queue = betting.get_historical(trading, r'D:\Betfair_data\horse_racing\2020\May\20\29810124 SE Solvalla\29810124 17_27 7 ODDS WIN')
+
+    myLogger.info(f'Processing historical file "{file_name}"...')
+    historical_queue = betting.get_historical(trading, file_name)
     historical_list = list(historical_queue.queue)
+
+    myLogger.info(f'Launching GUI...')
     run(__name__, historical_list, False)
