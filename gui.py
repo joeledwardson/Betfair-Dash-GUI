@@ -6,12 +6,13 @@ import plotly.express as px
 from plotly.graph_objs import Figure
 import pandas as pd
 from datetime import timedelta
-from myutils import generic, betting, timing, customlogging
+from myutils import generic, betting, timing, customlogging, bf_strategy
 import itertools
-from betfairlightweight.resources.bettingresources import PriceSize, MarketBook
+from betfairlightweight.resources.bettingresources import PriceSize, MarketBook, MarketCatalogue, RunnerBook
 from typing import List, Dict
 import os
 import argparse
+import re
 
 
 # create log folder if doesnt exist
@@ -31,7 +32,7 @@ class GUIInterface:
     # - record_list is based off api_client.streaming.create_historical_stream() where api_client is a
     # - betfairlightweight.APIClient instance
     # n_cards is number of runner cards to display in GUI
-    def __init__(self, record_list, n_cards: int):
+    def __init__(self, record_list, n_cards: int, catalogue: MarketCatalogue=None):
 
         # check the record list is not empty
         assert len(record_list)
@@ -55,14 +56,28 @@ class GUIInterface:
         # race simulator is running indicator
         self.running = False
 
-        # get runner IDs to names dict
-        self.runner_names = betting.get_names(self.active_record.market_definition)
+        if catalogue:
+
+            # if catalogue specified, use it to get runner names etc
+            self.runner_names = betting.get_names(catalogue, name_attr='runner_name')
+            self.event_name = catalogue.event.name
+            self.market_name = catalogue.market_name
+
+        else:
+
+            # otherwise, assume historical file and ust first record
+            self.runner_names = betting.get_names(self.active_record.market_definition)
+            self.event_name = self.active_record.market_definition.event_name
+            self.market_name = self.active_record.market_definition.name
+
+        self.market_time = self.active_record.market_definition.market_time
 
         # number of runner cards to display in GUI
         self.n_cards = n_cards
 
         # get data frame of last traded prices
-        self.ltps: pd.DataFrame = betting.get_ltps(record_list, self.runner_names)
+        self.ltps: pd.DataFrame = betting.runner_table(record_list)
+        self.ltps.columns = [self.runner_names[selection_id] for selection_id in self.ltps.columns]
 
         # index of record at the start of the last traded prices graph
         self.chart_start_index = 0
@@ -144,13 +159,13 @@ class InfoComponent(GuiComponent):
     # dict of MarketBook properties, whereby key is property display name and value is function to get value from
     # MarketBook
     RECORD_INFO = {
-        'Record Time': lambda r: r.publish_time.isoformat(sep=' ', timespec='milliseconds'),
-        'Market Time': lambda r: r.market_definition.market_time.isoformat(sep=' ', timespec='milliseconds'),
-        'Event Name': lambda r: r.market_definition.event_name,
-        'Name': lambda r: r.market_definition.name,
-        'Betting Type': lambda r: r.market_definition.betting_type,
-        'Total Matched': lambda r: '£{:,.0f}'.format(sum(runner.total_matched or 0 for runner in r.runners)),
-        'In Play': lambda r: r.market_definition.in_play
+        'Record Time': lambda r, intf:      r.publish_time.isoformat(sep=' ', timespec='milliseconds'),
+        'Market Time': lambda r, intf:      intf.market_time,
+        'Event Name': lambda r, intf:       intf.event_name,
+        'Market Name': lambda r, intf:      intf.market_name,
+        'Betting Type': lambda r, intf:     r.market_definition.betting_type,
+        'Total Matched': lambda r, intf:    '£{:,.0f}'.format(sum(runner.total_matched or 0 for runner in r.runners)),
+        'In Play': lambda r, intf:          r.market_definition.in_play
     }
 
     def create(self, g: GUIInterface):
@@ -177,6 +192,10 @@ class InfoComponent(GuiComponent):
                 'Value': g.timer.current().isoformat(sep=' ', timespec='milliseconds')
             },
             {
+                'Info': 'Time to off',
+                'Value': re.sub(r'\..*', '', str(g.market_time - g.timer.current())), # remove milliseconds ".123" etc
+            },
+            {
                 'Info': 'Record index',
                 'Value': g.active_index
             }
@@ -186,7 +205,7 @@ class InfoComponent(GuiComponent):
         data += [
             {
                 'Info': k,
-                'Value': f(g.active_record)
+                'Value': f(g.active_record, g)
             }
             for k, f in self.RECORD_INFO.items()
         ]
@@ -364,31 +383,42 @@ class ChartComponent(GuiComponent):
         # subtract chart span (seconds) from end to get start time of chart
         start = end - timedelta(seconds=self.span_s)
 
-        # increment chart start index while (next record is not last record) and (next record time is less than start
-        # time). Once next record is beyond start time, loop will exit, and index will be the last one before
-        # exceeding the start time
-        while g.chart_start_index + 1 < g.index_count and \
-                g.historical_list[g.chart_start_index + 1][0].publish_time < start:
-            g.chart_start_index += 1
+        # # increment chart start index while (next record is not last record) and (next record time is less than start
+        # # time). Once next record is beyond start time, loop will exit, and index will be the last one before
+        # # exceeding the start time
+        # while g.chart_start_index + 1 < g.index_count and \
+        #         g.historical_list[g.chart_start_index + 1][0].publish_time < start:
+        #     g.chart_start_index += 1
+        #
+        # # increment chart end index while (next record is not last record) and (next record time is less than end time)
+        # # Once next record beyond end time, loop will exit, index will be last once before exceeding end time
+        # while g.chart_end_index + 1 < g.index_count and \
+        #         g.historical_list[g.chart_end_index][0].publish_time < end:
+        #     g.chart_end_index += 1
+        #
+        # # end index is last record before exceeding end time. However, need record beyond end time so that entries fill
+        # # up to the end of the chart. Thus need chart_end_index + 1, but need to add another 1 because slicing does not
+        # # include the upper value (i.e. slice(0, 3) is from 0 to 2 not 0 to 3)
+        # df = g.ltps.iloc[g.chart_start_index: g.chart_end_index + 2]
 
-        # increment chart end index while (next record is not last record) and (next record time is less than end time)
-        # Once next record beyond end time, loop will exit, index will be last once before exceeding end time
-        while g.chart_end_index + 1 < g.index_count and \
-                g.historical_list[g.chart_end_index][0].publish_time < end:
-            g.chart_end_index += 1
+        df = g.ltps
+        df = df[df.index >= start]
+        df = df[df.index <= end]
 
-        # end index is last record before exceeding end time. However, need record beyond end time so that entries fill
-        # up to the end of the chart. Thus need chart_end_index + 1, but need to add another 1 because slicing does not
-        # include the upper value (i.e. slice(0, 3) is from 0 to 2 not 0 to 3)
-        df = g.ltps[g.chart_start_index: g.chart_end_index + 2]
+        if df.shape[0]:
 
-        # create figure based off dataframe
-        self.fig = px.line(df, width=500, height=400)
+            # create figure based off dataframe
+            self.fig = px.line(df, width=500, height=400)
 
-        # set to 0 margins, logarithmic type, and xaxis timestamp start and end
-        self.fig.update_layout(margin=dict(l=0, r=0, t=0, b=0, pad=0),
-                               yaxis_type="log",
-                               xaxis=dict(range=[start, end]))
+            # set to 0 margins, logarithmic type, and xaxis timestamp start and end
+            self.fig.update_layout(margin=dict(l=0, r=0, t=0, b=0, pad=0),
+                                   yaxis_type="log",
+                                   xaxis=dict(range=[start, end]))
+
+        else:
+
+            self.fig = Figure()
+
         return self.fig
 
     def create(self, g: GUIInterface):
@@ -556,12 +586,12 @@ class RunnerCard(GuiComponent):
 
     # update table data for a given market book (list of price sizes) and its abbreviation within dict (key)
     @staticmethod
-    def update_data(tbl, price_list: List[PriceSize], key):
+    def update_data(tbl, price_list: List[Dict], key):
 
         for p in price_list:
 
             # convert "price" (odds value) to encoded integer value
-            t = betting.float_encode(p.price)
+            t = betting.float_encode(p['price'])
 
             # check that price appears in ticks array
             if t in betting.LTICKS:
@@ -570,7 +600,7 @@ class RunnerCard(GuiComponent):
                 i = betting.LTICKS.index(t)
 
                 # update value in table
-                tbl[i][key] = f'{p.size:.2f}'
+                tbl[i][key] = f'{p["size"]:.2f}'
 
     # create dropdown element for selecting a runner
     @classmethod
@@ -709,7 +739,7 @@ class DashGUI(generic.StaticClass):
 
     # entry point - create and return dash app, having created components and callbacks
     @classmethod
-    def create_app(cls, name, record_list) -> dash.Dash:
+    def create_app(cls, name, record_list, catalogue) -> dash.Dash:
 
         # get absolute path of assets folder
         path = os.path.abspath(__file__)
@@ -721,7 +751,7 @@ class DashGUI(generic.StaticClass):
         cls.app = dash.Dash(name, assets_folder=assets_path)
 
         # create 'GUIInterface' instance
-        cls.g = GUIInterface(record_list, cls.N_CARDS)
+        cls.g = GUIInterface(record_list, cls.N_CARDS, catalogue)
 
         # create list of children with first instance as interval callback to trigger periodic updating
         children = [
@@ -747,18 +777,19 @@ class DashGUI(generic.StaticClass):
 
 # create and run dash app - 'name' specifies app name, 'record_list' is historical record list and 'debug' set to True
 # or False passed directly to app.run_server()
-def run(name, record_list, debug):
-    app = DashGUI.create_app(name, record_list)
-    app.run_server(debug=debug)
+# def run(name, record_list, catalogue, debug):
+#     app = DashGUI.create_app(name, record_list, catalogue)
+#     app.run_server(debug=debug)
 
 
-# if module run and not imported then run app using sample data
-if __name__ == '__main__':
-
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('race_file',
                         type=str,
                         help='historical horse racing file to run with GUI')
+    parser.add_argument('--catalogue_file',
+                        type=str,
+                        help='catalogue file, if unspecified, "race_file" will be taken as historical and market information taken from there')
 
     args = parser.parse_args()
     file_name = args.race_file
@@ -771,5 +802,17 @@ if __name__ == '__main__':
     historical_queue = betting.get_historical(trading, file_name)
     historical_list = list(historical_queue.queue)
 
+    catalogue=None
+    if args.catalogue_file:
+        catalogue = bf_strategy.get_hist_cat(args.catalogue_file)
+        if not catalogue:
+            return
+
     myLogger.info(f'Launching GUI...')
-    run(__name__, historical_list, False)
+
+    app = DashGUI.create_app(__name__, historical_list, catalogue)
+    app.run_server(debug=False)
+
+
+if __name__ == '__main__':
+    main()
