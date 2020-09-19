@@ -14,6 +14,8 @@ import os
 import argparse
 import re
 
+# TODO - invert ladders to higher prices appear above
+# TODO - make recent slider number of minutes into an input arg
 
 # create log folder if doesnt exist
 if not os.path.isdir('log'):
@@ -32,13 +34,14 @@ class GUIInterface:
     # - record_list is based off api_client.streaming.create_historical_stream() where api_client is a
     # - betfairlightweight.APIClient instance
     # n_cards is number of runner cards to display in GUI
-    def __init__(self, record_list, n_cards: int, catalogue: MarketCatalogue=None):
+    def __init__(self, record_list: List[List[MarketBook]], n_cards: int, catalogue: MarketCatalogue=None):
 
         # check the record list is not empty
         assert len(record_list)
 
         # assign historical list to local copy
         self.historical_list = record_list
+
         # quickly accessible number of records, shorthand of len(self.historical_list)
         self.index_count = len(record_list)
 
@@ -289,7 +292,7 @@ class NavComponent(GuiComponent):
 
             # get datetime start and end
             t_start = g.historical_list[0][0].publish_time
-            t_end = g.historical_list[-1][0].publish_time
+            t_end = g.market_time
 
             value = None
 
@@ -647,7 +650,7 @@ class CardComponents(GuiComponent):
             return runner.last_price_traded or float('inf')
 
         # get pre race records
-        pre_race = [h for h in g.historical_list if not h[0].inplay]
+        pre_race = betting.pre_off(g.historical_list, g.market_time)
 
         # get last record before race starts
         last_record = pre_race[-1][0]
@@ -790,6 +793,9 @@ def main():
     parser.add_argument('--catalogue_file',
                         type=str,
                         help='catalogue file, if unspecified, "race_file" will be taken as historical and market information taken from there')
+    parser.add_argument('--dash_debug',
+                        action='store_true',
+                        help='set to enable dash debug mode')
 
     args = parser.parse_args()
     file_name = args.race_file
@@ -811,7 +817,7 @@ def main():
     myLogger.info(f'Launching GUI...')
 
     app = DashGUI.create_app(__name__, historical_list, catalogue)
-    app.run_server(debug=False)
+    app.run_server(debug=args.dash_debug)
 
 
 if __name__ == '__main__':
