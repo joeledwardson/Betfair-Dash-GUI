@@ -25,16 +25,20 @@ if not os.path.isdir('log'):
 myLogger = customlogging.create_dual_logger('gui', 'log/dashlog.log', file_reset=True)
 
 
-# GUI interface class holds data which is shared between different GUI Components
-# - for example, simulated race time needs to be accessible to the chart component, not just the information table
-# - which displays the simulated time
 class GUIInterface:
+    """
+    GUI interface class holds data which is shared between different GUI Components
+    - for example, simulated race time needs to be accessible to the chart component, not just the information table
+    - which displays the simulated time
+    """
 
-    # record_list should be list of [MarketBook], (that is, each element is a list with 1 element of type MarketBook)
-    # - record_list is based off api_client.streaming.create_historical_stream() where api_client is a
-    # - betfairlightweight.APIClient instance
-    # n_cards is number of runner cards to display in GUI
     def __init__(self, record_list: List[List[MarketBook]], n_cards: int, catalogue: MarketCatalogue=None):
+        """
+        record_list should be list of [MarketBook], (that is, each element is a list with 1 element of type MarketBook)
+        - record_list is based off api_client.streaming.create_historical_stream() where api_client is a
+        - betfairlightweight.APIClient instance
+        n_cards is number of runner cards to display in GUI
+        """
 
         # check the record list is not empty
         assert len(record_list)
@@ -90,9 +94,11 @@ class GUIInterface:
         # slider relative position
         self.slider_val = 0
 
-    # update self.active_index and self.active_record based on which record in list has a timestamp closest to (but not
-    # more than) current simulation time
     def update_current_record(self):
+        """
+        update self.active_index and self.active_record based on which record in list has a timestamp closest to (but not
+        more than) current simulation time
+        """
 
         while 1:
 
@@ -120,44 +126,58 @@ class GUIInterface:
             # update current record
             self.active_record = self.historical_list[self.active_index][0]
 
-    # check if active index is last in list
     def at_end(self):
+        """
+        check if active index is last in list
+        """
         return not (self.active_index < self.index_count)
 
-    # start race running GUI simulation
     def start_running(self):
+        """
+        start race running GUI simulation
+        """
         if not self.at_end() and not self.running:
             self.timer.start()
             self.running = True
 
-    # stop race running simulation
     def stop_running(self):
+        """
+        stop race running simulation
+        """
         if self.running:
             self.timer.stop()
         self.running = False
 
 
-# abstract class for GUI components
 class GuiComponent:
+    """
+    abstract class for GUI components
+    """
 
-    # create() method must be derived
-    # takes a GUIInterface instance to interact with GUI properties and returns a html dash Component
     def create(self, g: GUIInterface) -> dash.development.base_component.Component:
+        """
+        create() method must be derived
+        takes a GUIInterface instance to interact with GUI properties and returns a html dash Component
+        """
         raise Exception(f'Cannot use base "{self.__class__}" class')
 
-    # callbacks() is optional to derive
-    # takes a GUIInterface instance to interact with GUI properties and returns a html dash Component
-    # takes a Dash instance which can be used to declare callbacks with syntax @app.callback(...)[...]
-    # must return a list of dicts, where each dict will be added to callbacks triggered on periodic updating, dict
-    # values are:
-    # - 'output': dash.dependencies.Output() instance
-    # - 'function': callback function with 0 arguments
     def callbacks(self, g: GUIInterface, app: dash.Dash) -> List[Dict]:
+        """
+        callbacks() is optional to derive
+        takes a GUIInterface instance to interact with GUI properties and returns a html dash Component
+        takes a Dash instance which can be used to declare callbacks with syntax @app.callback(...)[...]
+        must return a list of dicts, where each dict will be added to callbacks triggered on periodic updating, dict
+        values are:
+        - 'output': dash.dependencies.Output() instance
+        - 'function': callback function with 0 arguments
+        """
         return []
 
 
-# GUI Component - Race information table
 class InfoComponent(GuiComponent):
+    """
+    GUI Component - Race information table
+    """
 
     # dict of MarketBook properties, whereby key is property display name and value is function to get value from
     # MarketBook
@@ -185,8 +205,10 @@ class InfoComponent(GuiComponent):
 
         ])
 
-    # get list of dict items with 'Info' attribute as property display name and 'Value' as property value
     def info_columns(self, g: GUIInterface):
+        """
+        get list of dict items with 'Info' attribute as property display name and 'Value' as property value
+        """
 
         # get simulated time and active record index
         data = [
@@ -217,8 +239,8 @@ class InfoComponent(GuiComponent):
 
     def callbacks(self, g: GUIInterface, app: dash.Dash):
 
-        # period callback function
         def update():
+            """period callback function"""
 
             # update active index and record here
             g.update_current_record()
@@ -234,15 +256,19 @@ class InfoComponent(GuiComponent):
         }]
 
 
-# GUI Component - race navigation
 class NavComponent(GuiComponent):
+    """
+    GUI Component - race navigation
+    """
 
     # number of steps in sliders
     N_STEPS = 1000
 
-    # create html slider - requires unique {html_id}, and strings to display at start {start_str} and end {end_str}
-    # of slider
     def slider(self, html_id, start_str, end_str) -> dcc.Slider:
+        """
+        create html slider - requires unique {html_id}, and strings to display at start {start_str} and end {end_str}
+        of slider
+        """
         return dcc.Slider(
             id=html_id,
             min=0,
@@ -369,16 +395,22 @@ class NavComponent(GuiComponent):
         return []
 
 
-# GUI Component - runner chart
 class ChartComponent(GuiComponent):
+    """
+    GUI Component - runner chart
+    """
 
-    # pass chart span (seconds) to constructor
     def __init__(self, chart_span_s):
+        """
+        pass chart span (seconds) to constructor
+        """
         self.chart: Figure = None
         self.span_s = chart_span_s
 
-    # generate figure of last traded prices of runners from current simulation time
     def get_fig(self, g: GUIInterface) -> Figure:
+        """
+        generate figure of last traded prices of runners from current simulation time
+        """
 
         # use current simulation time as end of chart
         end = g.timer.current()
@@ -409,7 +441,6 @@ class ChartComponent(GuiComponent):
         df = df[df.index <= end]
 
         if df.shape[0]:
-
             # create figure based off dataframe
             self.fig = px.line(df, width=500, height=400)
 
@@ -419,7 +450,6 @@ class ChartComponent(GuiComponent):
                                    xaxis=dict(range=[start, end]))
 
         else:
-
             self.fig = Figure()
 
         return self.fig
@@ -447,8 +477,10 @@ class ChartComponent(GuiComponent):
         }]
 
 
-# GUI Component (not to be used directly) - single runner card
 class RunnerCard(GuiComponent):
+    """
+    GUI Component (not to be used directly) - single runner card
+    """
 
     # dict mapping of book attribute names within runner book to display names in runner card
     BOOK_ABRVS = {
@@ -457,12 +489,12 @@ class RunnerCard(GuiComponent):
         'traded_volume': 'tv'
     }
 
-    """
-    runner_id is the ID of the runner selected for the card.
-    index is the index of the card displayed on the GUI - this is used for creation of unique keys in html elements
-    name of the name of the runner
-    """
     def __init__(self, runner_id, index, name):
+        """
+        runner_id is the ID of the runner selected for the card.
+        index is the index of the card displayed on the GUI - this is used for creation of unique keys in html elements
+        name of the name of the runner
+        """
         self.runner_id = runner_id
         self.index = index
         self.table_id = f'runner-table-{index}'
@@ -532,8 +564,10 @@ class RunnerCard(GuiComponent):
     def t(name, index):
         return f'{name}-{index}'
 
-    # create unique id based on element name and card index
     def create(self, g: GUIInterface):
+        """
+        create unique id based on element name and card index
+        """
 
         # create dataset for empty table
         tbl_data = self.table_data(self.index)
@@ -550,9 +584,9 @@ class RunnerCard(GuiComponent):
             self.create_table(tbl_data, self.table_id, self.index)
         ])
 
-    # create html Div containing ladder table to hold ladder data
     @classmethod
     def create_table(cls, table_data, table_id, index):
+        """create html Div containing ladder table to hold ladder data"""
         return html.Div(className="runner-component runner-table-container", children=[
             dash_table.DataTable(
                 id=table_id,
@@ -575,9 +609,9 @@ class RunnerCard(GuiComponent):
             )
         ])
 
-    # create table with odds ticks filled, but empty for everything else
     @classmethod
     def table_data(cls, index):
+        """create table with odds ticks filled, but empty for everything else"""
         return [
             {
                 cls.t('atb', index): None,
@@ -587,10 +621,11 @@ class RunnerCard(GuiComponent):
             } for tick in betting.TICKS_DECODED
         ]
 
-    # update table data for a given market book (list of price sizes) and its abbreviation within dict (key)
     @staticmethod
     def update_data(tbl, price_list: List[Dict], key):
-
+        """
+        update table data for a given market book (list of price sizes) and its abbreviation within dict (key)
+        """
         for p in price_list:
 
             # convert "price" (odds value) to encoded integer value
@@ -605,10 +640,11 @@ class RunnerCard(GuiComponent):
                 # update value in table
                 tbl[i][key] = f'{p["size"]:.2f}'
 
-    # create dropdown element for selecting a runner
     @classmethod
     def create_dropdown(cls, index, runner_id, g: GUIInterface):
-
+        """
+        create dropdown element for selecting a runner
+        """
         return dcc.Dropdown(
             id=cls.t('dropdown', index),
             options=[
@@ -618,9 +654,11 @@ class RunnerCard(GuiComponent):
             value = runner_id
         )
 
-    # create title element which holds dropdown for runner select, selected runner indicators
     @classmethod
     def create_title(cls, index, runner_name, runner_id, g: GUIInterface):
+        """
+        create title element which holds dropdown for runner select, selected runner indicators
+        """
         return html.Div(className="runner-component runner-title", children=[
             cls.create_dropdown(index, runner_id, g),
             html.Div(id=cls.t('selected-indicator', index), children=[
@@ -637,8 +675,10 @@ class RunnerCard(GuiComponent):
         ])
 
 
-# GUI Component - runner cards group
 class CardComponents(GuiComponent):
+    """
+    GUI Component - runner cards group
+    """
 
     def __init__(self):
         self.runner_cards: List[RunnerCard] = None
@@ -682,8 +722,10 @@ class CardComponents(GuiComponent):
         ))
 
 
-# GUI Component - GUI title
 class TitleComponent(GuiComponent):
+    """
+    GUI Component - GUI title
+    """
     def create(self, g: GUIInterface):
         return html.H1(
             'Betfair GUI',
@@ -691,9 +733,11 @@ class TitleComponent(GuiComponent):
         )
 
 
-# GUI class - must use class definition and not create instances, given there (should?) be only one GUI instance
-# running at a time
 class DashGUI(generic.StaticClass):
+    """
+    GUI class - must use class definition and not create instances, given there (should?) be only one GUI instance
+    running at a time
+    """
 
     # number of runner cards to display
     N_CARDS = 3
@@ -740,9 +784,11 @@ class DashGUI(generic.StaticClass):
 
             return output_list
 
-    # entry point - create and return dash app, having created components and callbacks
     @classmethod
     def create_app(cls, name, record_list, catalogue) -> dash.Dash:
+        """
+        entry point - create and return dash app, having created components and callbacks
+        """
 
         # get absolute path of assets folder
         path = os.path.abspath(__file__)
@@ -792,7 +838,8 @@ def main():
                         help='historical horse racing file to run with GUI')
     parser.add_argument('--catalogue_file',
                         type=str,
-                        help='catalogue file, if unspecified, "race_file" will be taken as historical and market information taken from there')
+                        help='catalogue file, if unspecified, "race_file" will be taken as historical and '
+                             'market information taken from there')
     parser.add_argument('--dash_debug',
                         action='store_true',
                         help='set to enable dash debug mode')
