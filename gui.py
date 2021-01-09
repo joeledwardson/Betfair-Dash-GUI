@@ -6,13 +6,20 @@ import plotly.express as px
 from plotly.graph_objs import Figure
 import pandas as pd
 from datetime import timedelta
-from myutils import generic, betting, timing, customlogging, bf_strategy
 import itertools
-from betfairlightweight.resources.bettingresources import PriceSize, MarketBook, MarketCatalogue, RunnerBook
+from betfairlightweight.resources.bettingresources import MarketBook, MarketCatalogue, RunnerBook
 from typing import List, Dict
 import os
 import argparse
 import re
+from myutils import generic, mytiming,mylogging
+from mytrading.process import names as processnames
+from mytrading.process.ticks import ticks
+from mytrading.process import records
+from mytrading.utils import security
+from mytrading.utils import storage
+
+INTERVAL_UPDATE_MS = 2000
 
 # TODO - invert ladders to higher prices appear above
 # TODO - make recent slider number of minutes into an input arg
@@ -22,7 +29,7 @@ if not os.path.isdir('log'):
     os.mkdir('log')
 
 # custom logging instance which prints to console and logs debug to file
-myLogger = customlogging.create_dual_logger('gui', 'log/dashlog.log', file_reset=True)
+active_logger = mylogging.create_dual_logger('gui', 'log/dashlog.log', file_reset=True)
 
 
 class GUIInterface:
@@ -56,7 +63,8 @@ class GUIInterface:
         self.active_record: MarketBook = record_list[self.active_index][0]
 
         # timing simulator instance
-        self.timer = timing.TimeSimulator()
+        self.timer = mytiming.TimeSimulator()
+
         # set simulator start time to timestamp from active (first) record
         self.timer.reset_start(self.active_record.publish_time)
 
@@ -66,14 +74,14 @@ class GUIInterface:
         if catalogue:
 
             # if catalogue specified, use it to get runner names etc
-            self.runner_names = betting.get_names(catalogue, name_attr='runner_name')
+            self.runner_names = processnames.get_names(catalogue, name_attr='runner_name')
             self.event_name = catalogue.event.name
             self.market_name = catalogue.market_name
 
         else:
 
             # otherwise, assume historical file and ust first record
-            self.runner_names = betting.get_names(self.active_record.market_definition)
+            self.runner_names = processnames.get_names(self.active_record.market_definition)
             self.event_name = self.active_record.market_definition.event_name
             self.market_name = self.active_record.market_definition.name
 
@@ -83,7 +91,10 @@ class GUIInterface:
         self.n_cards = n_cards
 
         # get data frame of last traded prices
-        self.ltps: pd.DataFrame = betting.runner_table(record_list)
+        self.ltps = pd.DataFrame([{
+            runner.selection_id: runner.last_price_traded
+            for runner in r[0].runners
+        } for r in record_list], index=[r[0].publish_time for r in record_list])
         self.ltps.columns = [self.runner_names[selection_id] for selection_id in self.ltps.columns]
 
         # index of record at the start of the last traded prices graph
@@ -119,7 +130,7 @@ class GUIInterface:
         if self.active_index < 0 or self.active_index >= self.index_count:
 
             # sanity check index for out of bounds
-            myLogger.error(f'index "{self.active_index}" is out of bounds, len is "{self.index_count}"')
+            active_logger.error(f'index "{self.active_index}" is out of bounds, len is "{self.index_count}"')
 
         else:
 
@@ -288,6 +299,8 @@ class NavComponent(GuiComponent):
             html.Div(className="buttons-container", children=[
                 html.Button('Play', id='play-button', n_clicks=0),
                 html.Button('Pause', id='pause-button', n_clicks=0),
+                html.Button('<<', id='prev-button', n_clicks=0),
+                html.Button('>>', id='next-button', n_clicks=0),
                 html.Span(id='running-indicator')
             ]),
 
@@ -309,8 +322,10 @@ class NavComponent(GuiComponent):
 
         @app.callback(
             dash.dependencies.Output('slider-output-container', 'children'),
-            [dash.dependencies.Input('my-slider', 'value'),
-             dash.dependencies.Input('my-recent-slider', 'value')])
+            [
+                dash.dependencies.Input('my-slider', 'value'),
+                dash.dependencies.Input('my-recent-slider', 'value')
+            ])
         def update_output(slider_val, recent_slider_val):
 
             # get ID of button which was last pressed
@@ -324,17 +339,17 @@ class NavComponent(GuiComponent):
 
             if 'recent' in changed_id:
                 value = recent_slider_val
-                myLogger.info(f'recent slider triggered: {value}')
+                active_logger.info(f'recent slider triggered: {value}')
 
                 # use 30 minutes from end for recent slider
                 t_start = t_end - timedelta(minutes=30)
 
             elif 'slider' in changed_id:
                 value = slider_val
-                myLogger.info(f'full slider triggered: {value}')
+                active_logger.info(f'full slider triggered: {value}')
 
             else:
-                myLogger.info(f'slider id "{changed_id}" not recognised')
+                active_logger.info(f'slider id "{changed_id}" not recognised')
                 return ['']
 
             # reset chart indexing values
@@ -355,22 +370,29 @@ class NavComponent(GuiComponent):
 
             return [f'You have selected {t_str}']
 
-        @app.callback(dash.dependencies.Output('running-indicator', 'children'),
-                      [dash.dependencies.Input('play-button', 'n_clicks'),
-                       dash.dependencies.Input('pause-button', 'n_clicks')])
-        def play_button(a, b):
+        @app.callback(
+            output=dash.dependencies.Output('running-indicator', 'children'),
+            inputs=[
+                dash.dependencies.Input('play-button', 'n_clicks'),
+                dash.dependencies.Input('pause-button', 'n_clicks'),
+                dash.dependencies.Input('prev-button', 'n_clicks'),
+                dash.dependencies.Input('next-button', 'n_clicks')],
+            state=[
+                dash.dependencies.State('running-indicator', 'children'),
+            ])
+        def play_button(play, pause, prev, next_, element):
 
             # get ID of button which was last pressed
             changed_id = get_changed_id()
 
-            # initialise blank identifying element
-            element = ''
+            # # initialise blank identifying element
+            # element = ''
 
             if 'play-button' in changed_id:
 
                 # play button pressed - start running
                 g.start_running()
-                myLogger.info('Start button pressed')
+                active_logger.info('Start button pressed')
 
                 # set html element to indicate race is now running
                 element = 'RUNNING'
@@ -379,15 +401,26 @@ class NavComponent(GuiComponent):
 
                 # pause button pressed
                 g.stop_running()
-                myLogger.info('Stop button paused')
+                active_logger.info('Stop button paused')
 
                 # set html element to indicate race has stopped running
                 element = 'STOPPED'
 
+            elif 'prev-button' in changed_id:
+
+                # previous index button pressed
+                g.active_index = max(g.active_index - 1, 0)
+
+            elif 'next-button' in changed_id:
+
+                # next index button pressed
+                g.active_index = min(g.active_index + 1, len(g.historical_list))
+
             else:
 
                 # id of button pressed not recognised
-                myLogger.warning(f'Button pressed not recognised: {changed_id}')
+                element = ''
+                active_logger.warning(f'Button pressed not recognised: {changed_id}')
 
             return element
 
@@ -508,14 +541,14 @@ class RunnerCard(GuiComponent):
         def update_selected(new_runner_id):
 
             # log runner change
-            myLogger.info(f'Index {self.index} ladder just selected id {new_runner_id}')
+            active_logger.info(f'Index {self.index} ladder just selected id {new_runner_id}')
 
             # get existing selected ID
             selected = self.runner_id
 
             # check ID exists and quit if not with existing ID
             if new_runner_id not in g.runner_names.keys():
-                myLogger.warn(f'Value selected by index {self.index} is not found in runner indexes')
+                active_logger.warn(f'Value selected by index {self.index} is not found in runner indexes')
                 return selected
 
             # assign new ID
@@ -537,23 +570,22 @@ class RunnerCard(GuiComponent):
             # get index of runner's id in record's runner list
             list_index = generic.get_index(g.active_record.runners, lambda r: r.selection_id == self.runner_id)
 
-            # if runner not found, return empty table
-            if not list_index:
-                return tbl_data
+            # check runner found
+            if list_index:
 
-            # get runner book object
-            runner_book = g.active_record.runners[list_index]
+                # get runner book object
+                runner_book = g.active_record.runners[list_index]
 
-            # loop market book attribute names
-            for bk_name, bk_abrv in self.BOOK_ABRVS.items():
+                # loop market book attribute names
+                for bk_name, bk_abrv in self.BOOK_ABRVS.items():
 
-                # get market book data and assign to ladder
-                self.update_data(
-                    tbl=tbl_data,
-                    price_list=getattr(runner_book.ex, bk_name),
-                    key=self.t(bk_abrv, self.index))
+                    # get market book data and assign to ladder
+                    self.update_data(
+                        tbl=tbl_data,
+                        price_list=getattr(runner_book.ex, bk_name),
+                        key=self.t(bk_abrv, self.index))
 
-            return tbl_data
+            return list(reversed(tbl_data))
 
         return [{
             'output': dash.dependencies.Output(self.table_id, 'data'),
@@ -618,7 +650,7 @@ class RunnerCard(GuiComponent):
                 cls.t('odds', index): tick,
                 cls.t('atl', index): None,
                 cls.t('tv', index): None
-            } for tick in betting.TICKS_DECODED
+            } for tick in ticks.LTICKS_DECODED
         ]
 
     @staticmethod
@@ -629,13 +661,13 @@ class RunnerCard(GuiComponent):
         for p in price_list:
 
             # convert "price" (odds value) to encoded integer value
-            t = betting.float_encode(p['price'])
+            t = ticks.float_encode(p['price'])
 
             # check that price appears in ticks array
-            if t in betting.LTICKS:
+            if t in ticks.LTICKS:
 
                 # and get index where it appears
-                i = betting.LTICKS.index(t)
+                i = ticks.LTICKS.index(t)
 
                 # update value in table
                 tbl[i][key] = f'{p["size"]:.2f}'
@@ -690,7 +722,7 @@ class CardComponents(GuiComponent):
             return runner.last_price_traded or float('inf')
 
         # get pre race records
-        pre_race = betting.pre_off(g.historical_list, g.market_time)
+        pre_race = records.pre_off(g.historical_list, g.market_time)
 
         # get last record before race starts
         last_record = pre_race[-1][0]
@@ -755,7 +787,7 @@ class DashGUI(generic.StaticClass):
     componentList: List[GuiComponent] = [TitleComponent(),
                                          InfoComponent(),
                                          NavComponent(),
-                                         ChartComponent(CHART_SPAN_S),
+                                         # ChartComponent(CHART_SPAN_S),
                                          CardComponents()]
 
     @classmethod
@@ -806,7 +838,7 @@ class DashGUI(generic.StaticClass):
         children = [
             dcc.Interval(
                 id='interval-component',
-                interval=1 * 1000,  # in milliseconds
+                interval=INTERVAL_UPDATE_MS,  # in milliseconds
                 n_intervals=0
             )
         ]
@@ -847,21 +879,21 @@ def main():
     args = parser.parse_args()
     file_name = args.race_file
 
-    myLogger.info('Logging into betfair API...')
-    trading = betting.get_api_client()
+    active_logger.info('Logging into betfair API...')
+    trading = security.get_api_client()
     trading.login()
 
-    myLogger.info(f'Processing historical file "{file_name}"...')
-    historical_queue = betting.get_historical(trading, file_name)
+    active_logger.info(f'Processing historical file "{file_name}"...')
+    historical_queue = storage.get_historical(trading, file_name)
     historical_list = list(historical_queue.queue)
 
     catalogue=None
     if args.catalogue_file:
-        catalogue = bf_strategy.get_hist_cat(args.catalogue_file)
+        catalogue = storage.get_hist_cat(args.catalogue_file)
         if not catalogue:
             return
 
-    myLogger.info(f'Launching GUI...')
+    active_logger.info(f'Launching GUI...')
 
     app = DashGUI.create_app(__name__, historical_list, catalogue)
     app.run_server(debug=args.dash_debug)
