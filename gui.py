@@ -2,6 +2,7 @@ import dash_core_components as dcc
 import dash
 import dash_html_components as html
 import dash_table
+from dash.dependencies import Input, Output
 import plotly.express as px
 from plotly.graph_objs import Figure
 import pandas as pd
@@ -12,12 +13,22 @@ from typing import List, Dict
 import os
 import argparse
 import re
+from myutils.mydash import intermediate
 from myutils import generic, mytiming,mylogging
 from mytrading.process import names as processnames
 from mytrading.process.ticks import ticks
 from mytrading.process import records
 from mytrading.utils import security
 from mytrading.utils import storage
+
+
+def hidden_div(div_id) -> html.Div:
+    return html.Div(
+        children='',
+        style={'display': 'none'},
+        id=div_id,
+    )
+
 
 INTERVAL_UPDATE_MS = 2000
 
@@ -179,7 +190,7 @@ class GuiComponent:
         takes a Dash instance which can be used to declare callbacks with syntax @app.callback(...)[...]
         must return a list of dicts, where each dict will be added to callbacks triggered on periodic updating, dict
         values are:
-        - 'output': dash.dependencies.Output() instance
+        - 'output': Output() instance
         - 'function': callback function with 0 arguments
         """
         return []
@@ -262,7 +273,7 @@ class InfoComponent(GuiComponent):
         # period update has output of 'data' attribute of datatable
         # function updates current record and returns updated info
         return [{
-            'output': dash.dependencies.Output('info-table', 'data'),
+            'output': Output('info-table', 'data'),
             'function': update
         }]
 
@@ -271,6 +282,11 @@ class NavComponent(GuiComponent):
     """
     GUI Component - race navigation
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.counter_1 = intermediate.Intermediary()
+        self.counter_2 = intermediate.Intermediary()
 
     # number of steps in sliders
     N_STEPS = 1000
@@ -312,6 +328,9 @@ class NavComponent(GuiComponent):
 
             # div which displays last timestamp selected by either of the sliders
             html.Div(id='slider-output-container'),
+
+            hidden_div("hidden-nav-1"),
+            hidden_div("hidden-nav-2"),
         ])
 
     def callbacks(self, g: GUIInterface, app: dash.Dash):
@@ -321,10 +340,12 @@ class NavComponent(GuiComponent):
             return [p['prop_id'] for p in dash.callback_context.triggered][0]
 
         @app.callback(
-            dash.dependencies.Output('slider-output-container', 'children'),
-            [
-                dash.dependencies.Input('my-slider', 'value'),
-                dash.dependencies.Input('my-recent-slider', 'value')
+            output=[
+                Output('slider-output-container', 'children'),
+                Output('hidden-nav-1', 'children')],
+            inputs=[
+                Input('my-slider', 'value'),
+                Input('my-recent-slider', 'value')
             ])
         def update_output(slider_val, recent_slider_val):
 
@@ -368,15 +389,17 @@ class NavComponent(GuiComponent):
             # set simluation timer current datetime value
             g.timer.reset_start(t_current)
 
-            return [f'You have selected {t_str}']
+            return [f'You have selected {t_str}', self.counter_1.next()]
 
         @app.callback(
-            output=dash.dependencies.Output('running-indicator', 'children'),
+            output=[
+                Output('running-indicator', 'children'),
+                Output('hidden-nav-2', 'children')],
             inputs=[
-                dash.dependencies.Input('play-button', 'n_clicks'),
-                dash.dependencies.Input('pause-button', 'n_clicks'),
-                dash.dependencies.Input('prev-button', 'n_clicks'),
-                dash.dependencies.Input('next-button', 'n_clicks')],
+                Input('play-button', 'n_clicks'),
+                Input('pause-button', 'n_clicks'),
+                Input('prev-button', 'n_clicks'),
+                Input('next-button', 'n_clicks')],
             state=[
                 dash.dependencies.State('running-indicator', 'children'),
             ])
@@ -422,7 +445,7 @@ class NavComponent(GuiComponent):
                 element = ''
                 active_logger.warning(f'Button pressed not recognised: {changed_id}')
 
-            return element
+            return [element, self.counter_2.next()]
 
         # no periodic callback updating required
         return []
@@ -505,7 +528,7 @@ class ChartComponent(GuiComponent):
 
         # period update is 'figure; attribute of chart object
         return [{
-            'output': dash.dependencies.Output('runner-graph', 'figure'),
+            'output': Output('runner-graph', 'figure'),
             'function': update
         }]
 
@@ -536,8 +559,8 @@ class RunnerCard(GuiComponent):
     def callbacks(self, g: GUIInterface, app: dash.Dash):
 
         # callback triggered on runner dropdown selection change
-        @app.callback(dash.dependencies.Output(self.t('selected-indicator', self.index), 'children'),
-                      [dash.dependencies.Input(self.t('dropdown', self.index), 'value')])
+        @app.callback(Output(self.t('selected-indicator', self.index), 'children'),
+                      [Input(self.t('dropdown', self.index), 'value')])
         def update_selected(new_runner_id):
 
             # log runner change
@@ -588,7 +611,7 @@ class RunnerCard(GuiComponent):
             return list(reversed(tbl_data))
 
         return [{
-            'output': dash.dependencies.Output(self.table_id, 'data'),
+            'output': Output(self.table_id, 'data'),
             'function': update
         }]
 
@@ -803,9 +826,15 @@ class DashGUI(generic.StaticClass):
 
         # create interval callback
         # dash outputs are created from 'output' attributes in each callback dict returned from component
-        @cls.app.callback([c['output'] for c in interval_callbacks],
-                          [dash.dependencies.Input('interval-component', 'n_intervals')])
-        def interval_update(n_intervals):
+        @cls.app.callback(
+            output=[
+                c['output'] for c in interval_callbacks],
+            inputs=[
+                Input('interval-component', 'n_intervals'),
+                Input('hidden-nav-1', 'children'),
+                Input('hidden-nav-2', 'children')]
+        )
+        def interval_update(n_intervals, *args, **kwargs):
 
             # list to store outputs to return from callback
             output_list = []
@@ -862,42 +891,7 @@ class DashGUI(generic.StaticClass):
 #     app = DashGUI.create_app(name, record_list, catalogue)
 #     app.run_server(debug=debug)
 
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('race_file',
-                        type=str,
-                        help='historical horse racing file to run with GUI')
-    parser.add_argument('--catalogue_file',
-                        type=str,
-                        help='catalogue file, if unspecified, "race_file" will be taken as historical and '
-                             'market information taken from there')
-    parser.add_argument('--dash_debug',
-                        action='store_true',
-                        help='set to enable dash debug mode')
-
-    args = parser.parse_args()
-    file_name = args.race_file
-
-    active_logger.info('Logging into betfair API...')
-    trading = security.get_api_client()
-    trading.login()
-
-    active_logger.info(f'Processing historical file "{file_name}"...')
-    historical_queue = storage.get_historical(trading, file_name)
-    historical_list = list(historical_queue.queue)
-
-    catalogue=None
-    if args.catalogue_file:
-        catalogue = storage.get_hist_cat(args.catalogue_file)
-        if not catalogue:
-            return
-
-    active_logger.info(f'Launching GUI...')
-
+def launch_gui(historical_list, catalogue, debug, port):
     app = DashGUI.create_app(__name__, historical_list, catalogue)
-    app.run_server(debug=args.dash_debug)
+    app.run_server(debug=debug, port=port)
 
-
-if __name__ == '__main__':
-    main()
